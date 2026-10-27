@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { gameState } from '../state/GameState.js';
 import { EVENTS } from '../state/Events.js';
+import { audioManager } from '../managers/AudioManager.js';
 
 export class UIScene extends Phaser.Scene {
   constructor() {
@@ -49,16 +50,28 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // 4. Opponents Standing Counter
-    this.opponentText = this.add.text(width - 60, 35, `Armed Forces: ${gameState.opponentsActive}`, {
+    this.opponentText = this.add.text(width - 120, 35, `Armed Forces: ${gameState.opponentsActive}`, {
       fontFamily: 'system-ui, sans-serif',
       fontSize: '14px',
       fontStyle: 'bold',
       color: '#ffd54f'
     }).setOrigin(1, 0.5);
 
-    // 5. Rule Violation Alert Banner (Centered below HUD, hidden by default)
+    // 5. Sound Mute Button (Top Right)
+    this.soundBtn = this.add.rectangle(width - 50, 35, 36, 30, 0x243352)
+      .setStrokeStyle(1, 0x4ecca3)
+      .setInteractive({ useHandCursor: true });
+    
+    this.soundIcon = this.add.text(width - 50, 35, '🔊', { fontSize: '15px' }).setOrigin(0.5);
+
+    this.soundBtn.on('pointerdown', () => {
+      const isMuted = audioManager.toggleMute();
+      this.soundIcon.setText(isMuted ? '🔇' : '🔊');
+    });
+
+    // 6. Rule Violation Alert Banner
     this.alertBanner = this.add.container(width / 2, 85).setAlpha(0);
-    this.alertBg = this.add.rectangle(0, 0, 480, 32, 0xff1744, 0.88).setStrokeStyle(1, 0xffffff);
+    this.alertBg = this.add.rectangle(0, 0, 520, 32, 0xff1744, 0.88).setStrokeStyle(1, 0xffffff);
     this.alertText = this.add.text(0, 0, '', {
       fontFamily: 'system-ui, sans-serif',
       fontSize: '13px',
@@ -67,17 +80,17 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.alertBanner.add([this.alertBg, this.alertText]);
 
-    // 6. Action Guide Overlay (Bottom Left)
-    const guideText = 'Controls: [WASD] March | [SPACE] Timed Dodge | [SHIFT] Kneel / Hold Ground | [F] Prohibited Violence';
+    // 7. Action Guide Overlay
+    const guideText = 'Controls: [WASD] March | [SPACE] Timed Dodge | [SHIFT] Kneel | [E] Peaceful Chant | [F] Prohibited Violence';
     this.add.text(25, this.cameras.main.height - 25, guideText, {
       fontFamily: 'system-ui, sans-serif',
       fontSize: '12px',
       color: '#8b949e',
-      backgroundColor: 'rgba(13, 17, 23, 0.7)',
+      backgroundColor: 'rgba(13, 17, 23, 0.75)',
       padding: { x: 8, y: 4 }
     });
 
-    // 7. Event Subscriptions
+    // 8. Event Subscriptions
     this.bindEvents();
   }
 
@@ -87,7 +100,6 @@ export class UIScene extends Phaser.Scene {
       this.healthBar.width = (clamped / 100) * 160;
       this.healthText.setText(`${clamped} / 100`);
 
-      // Dynamic color: green -> yellow -> red
       if (clamped < 30) this.healthBar.setFillStyle(0xff1744);
       else if (clamped < 60) this.healthBar.setFillStyle(0xff9100);
       else this.healthBar.setFillStyle(0xe94560);
@@ -107,7 +119,6 @@ export class UIScene extends Phaser.Scene {
     gameState.on(EVENTS.SUPPORT_CHANGED, this.onSupportChanged);
     gameState.on(EVENTS.OPPONENT_COUNT_CHANGED, this.onOpponentsChanged);
 
-    // Rule Alerts from GameScene
     const gameScene = this.scene.get('GameScene');
     if (gameScene) {
       gameScene.events.on('ruleAlert', (data) => this.showAlert(data.message));

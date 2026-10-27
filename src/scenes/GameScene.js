@@ -5,6 +5,7 @@ import { Player } from '../entities/Player.js';
 import { Opponent } from '../entities/Opponent.js';
 import { Bystander } from '../entities/Bystander.js';
 import { RuleManager } from '../managers/RuleManager.js';
+import { audioManager } from '../managers/AudioManager.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -52,6 +53,7 @@ export class GameScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D,
       dodge: Phaser.Input.Keyboard.KeyCodes.SPACE,
       brace: Phaser.Input.Keyboard.KeyCodes.SHIFT,
+      chant: Phaser.Input.Keyboard.KeyCodes.E,
       forbiddenAttack: Phaser.Input.Keyboard.KeyCodes.F
     });
 
@@ -63,21 +65,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   createEnvironment(worldWidth, height) {
-    // Upper sidewalk (Bystanders / Observers)
     this.add.tileSprite(worldWidth / 2, height * 0.125, worldWidth, height * 0.25, 'street');
-
-    // Designated March Path (Center Street)
     this.add.tileSprite(worldWidth / 2, height / 2, worldWidth, height * 0.5, 'designated_path');
-
-    // Lower sidewalk
     this.add.tileSprite(worldWidth / 2, height * 0.875, worldWidth, height * 0.25, 'street');
 
-    // Boundary guide markers
     this.add.rectangle(worldWidth / 2, height * 0.25, worldWidth, 4, 0x4ecca3, 0.7);
     this.add.rectangle(worldWidth / 2, height * 0.75, worldWidth, 4, 0x4ecca3, 0.7);
 
-    // Destination Landmark (Courthouse / Assembly gates at x=3100)
-    const gates = this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.8);
+    this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.8);
     this.add.text(3150, height / 2, 'ASSEMBLY GATES', {
       fontFamily: 'system-ui',
       fontSize: '20px',
@@ -99,7 +94,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   createOpponents(height) {
-    // Staggered checkpoints along the march route with increasing defection thresholds
     const checkpointConfigs = [
       { x: 550, y: height / 2 - 50, threshold: 20 },
       { x: 900, y: height / 2 + 50, threshold: 35 },
@@ -123,12 +117,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   setupCombatEventListeners() {
-    // Listen for strikes landing from Opponents
     this.events.on('opponentStrikeLanded', ({ opponent, player }) => {
       this.handleStrikeInteraction(opponent, player);
     });
 
-    // Handle game over transitions
+    // Handle Chant Wave Ripple pacification
+    this.events.on('playerChant', ({ x, y, radius }) => {
+      this.opponents.forEach((opp) => {
+        const dist = Phaser.Math.Distance.Between(x, y, opp.x, opp.y);
+        if (dist <= radius) {
+          opp.pacify(2200);
+        }
+      });
+    });
+
     gameState.on(EVENTS.GAME_OVER, (data) => {
       this.physics.pause();
       this.time.delayedCall(1600, () => {
@@ -141,7 +143,6 @@ export class GameScene extends Phaser.Scene {
   handleStrikeInteraction(opponent, player) {
     if (gameState.isGameOver) return;
 
-    // Check proximity to press / bystanders for witness multiplier
     let isWitnessed = false;
     this.bystanders.forEach((bystander) => {
       if (bystander.isWitnessing(player.x, player.y)) {
@@ -152,7 +153,7 @@ export class GameScene extends Phaser.Scene {
 
     const witnessMultiplier = isWitnessed ? 1.5 : 1.0;
 
-    // CASE 1: Timed Dodge (Invulnerable Evasion)
+    // CASE 1: Timed Dodge
     if (player.isInvulnerable()) {
       const hpRecovery = 6;
       const spGain = Math.round(5 * witnessMultiplier);
@@ -169,12 +170,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // CASE 2: Peaceful Stand / Kneeling (Bracing)
+    // CASE 2: Peaceful Stand / Kneeling
     if (player.isBracing()) {
       const damage = -7;
       const baseSupport = 20;
       const netSupport = Math.round(baseSupport * witnessMultiplier);
 
+      audioManager.playHit();
       gameState.modifyHealth(damage);
       gameState.modifySupport(netSupport);
 
@@ -193,6 +195,7 @@ export class GameScene extends Phaser.Scene {
     const baseSupport = 10;
     const netSupport = Math.round(baseSupport * witnessMultiplier);
 
+    audioManager.playHit();
     gameState.modifyHealth(damage);
     gameState.modifySupport(netSupport);
 
@@ -211,7 +214,7 @@ export class GameScene extends Phaser.Scene {
       fontSize: '15px',
       fontStyle: 'bold',
       color: color,
-      backgroundColor: 'rgba(0,0,0,0.6)',
+      backgroundColor: 'rgba(0,0,0,0.65)',
       padding: { x: 8, y: 4 }
     }).setOrigin(0.5);
 
@@ -226,31 +229,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   setupMobileTouchControls(width, height) {
-    // Touch controls rendered with scrollFactor(0) so they follow camera
     if (!this.sys.game.device.input.touch) return;
 
     // 1. Mobile Dodge Button (Right Bottom)
-    const dodgeBtn = this.add.circle(width - 80, height - 80, 42, 0x4ecca3, 0.75)
+    const dodgeBtn = this.add.circle(width - 70, height - 70, 38, 0x4ecca3, 0.75)
       .setScrollFactor(0)
       .setInteractive();
 
-    this.add.text(width - 80, height - 80, 'DODGE', {
+    this.add.text(width - 70, height - 70, 'DODGE', {
       fontFamily: 'system-ui',
-      fontSize: '13px',
+      fontSize: '11px',
       fontStyle: 'bold',
       color: '#16213e'
     }).setOrigin(0.5).setScrollFactor(0);
 
     dodgeBtn.on('pointerdown', () => this.player.triggerDodge());
 
-    // 2. Mobile Kneel/Brace Button (Left of Dodge)
-    const braceBtn = this.add.circle(width - 180, height - 80, 42, 0xffd54f, 0.75)
+    // 2. Mobile Kneel/Brace Button
+    const braceBtn = this.add.circle(width - 155, height - 70, 38, 0xffd54f, 0.75)
       .setScrollFactor(0)
       .setInteractive();
 
-    this.add.text(width - 180, height - 80, 'KNEEL', {
+    this.add.text(width - 155, height - 70, 'KNEEL', {
       fontFamily: 'system-ui',
-      fontSize: '13px',
+      fontSize: '11px',
       fontStyle: 'bold',
       color: '#16213e'
     }).setOrigin(0.5).setScrollFactor(0);
@@ -258,26 +260,37 @@ export class GameScene extends Phaser.Scene {
     braceBtn.on('pointerdown', () => this.player.setBracing(true));
     braceBtn.on('pointerup', () => this.player.setBracing(false));
     braceBtn.on('pointerout', () => this.player.setBracing(false));
+
+    // 3. Mobile Chant Button
+    const chantBtn = this.add.circle(width - 240, height - 70, 38, 0x80cbc4, 0.75)
+      .setScrollFactor(0)
+      .setInteractive();
+
+    this.add.text(width - 240, height - 70, 'CHANT', {
+      fontFamily: 'system-ui',
+      fontSize: '11px',
+      fontStyle: 'bold',
+      color: '#16213e'
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    chantBtn.on('pointerdown', () => {
+      this.player.triggerChant(this.time.now);
+    });
   }
 
   update(time, delta) {
     if (gameState.isGameOver) return;
 
-    // 1. Handle player input
-    this.player.handleInput(this.cursors, this.wasdKeys);
+    this.player.handleInput(this.cursors, this.wasdKeys, time);
 
-    // 2. Forbidden attack check (Rule validation)
     if (Phaser.Input.Keyboard.JustDown(this.wasdKeys.forbiddenAttack)) {
       this.ruleManager.triggerViolenceInfraction('Retaliatory strike attempted');
     }
 
-    // 3. Update all opponents
     this.opponents.forEach((opp) => opp.update(time, delta, this.player));
 
-    // 4. Update Rule Manager (Path bounds)
     this.ruleManager.update(this.player);
 
-    // 5. Destination check (Assembly Gates reach)
     if (this.player.x >= 3120 && !gameState.isGameOver) {
       gameState.isGameOver = true;
       gameState.gameResult = 'victory';

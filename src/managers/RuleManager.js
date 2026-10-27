@@ -1,5 +1,5 @@
 import { gameState } from '../state/GameState.js';
-import { EVENTS } from '../state/Events.js';
+import { audioManager } from './AudioManager.js';
 
 export class RuleManager {
   constructor(scene, options = {}) {
@@ -7,13 +7,12 @@ export class RuleManager {
     this.pathTop = options.pathTop || 180;
     this.pathBottom = options.pathBottom || 540;
     this.wasOffPath = false;
-    this.offPathDrainRate = 0.15; // Support lost per frame update when off path
+    this.offPathDrainRate = 0.15;
   }
 
   update(player) {
     if (gameState.isGameOver || !player) return;
 
-    // 1. Boundary / Path Enforcement
     const isOff = player.y < this.pathTop || player.y > this.pathBottom;
 
     if (isOff) {
@@ -21,6 +20,7 @@ export class RuleManager {
 
       if (!this.wasOffPath) {
         this.wasOffPath = true;
+        audioManager.playViolation();
         this.scene.events.emit('ruleAlert', {
           rule: 'OFF_PATH',
           message: '⚠️ OFF DESIGNATED ROUTE: Public support draining!'
@@ -36,6 +36,7 @@ export class RuleManager {
 
   triggerViolenceInfraction(reason = 'Striking or pushing opponent') {
     const penalty = 25;
+    audioManager.playViolation();
     gameState.penalizeRule('NON_VIOLENCE', penalty);
 
     this.scene.cameras.main.shake(250, 0.02);
