@@ -39,7 +39,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 version: '3.8'
 
 services:
-  game-dev:
+  web:
     build: .
     container_name: nonviolent_combat_app
     ports:
@@ -49,6 +49,7 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
 ```
 
 ---
@@ -67,7 +68,7 @@ services:
 
 ---
 
-## 4. GitHub Actions CI/CD to GitHub Pages (Free)
+## 4. GitHub Actions CI/CD to GitHub Pages (Free Tier)
 
 ### 4.1 Deployment Workflow (`.github/workflows/deploy.yml`)
 ```yaml
@@ -101,12 +102,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm install
 
-      - name: Build Project
+      - name: Build Production Assets
         run: npm run build
 
       - name: Setup Pages
