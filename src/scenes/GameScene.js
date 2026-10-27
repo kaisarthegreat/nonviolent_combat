@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { gameState } from '../state/GameState.js';
 import { EVENTS } from '../state/Events.js';
+import { Player } from '../entities/Player.js';
+import { Opponent } from '../entities/Opponent.js';
+import { Bystander } from '../entities/Bystander.js';
+import { RuleManager } from '../managers/RuleManager.js';
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -12,198 +16,275 @@ export class GameScene extends Phaser.Scene {
 
     const width = this.cameras.main.width;
     const height = this.cameras.main.height;
+    const worldWidth = 3200;
 
-    // Set world bounds (extended horizontally for a marching street)
-    this.physics.world.setBounds(0, 0, 3000, height);
-    this.cameras.main.setBounds(0, 0, 3000, height);
+    // 1. World & Camera configuration
+    this.physics.world.setBounds(0, 0, worldWidth, height);
+    this.cameras.main.setBounds(0, 0, worldWidth, height);
 
-    // 1. Render sidewalks and designated road
-    this.createEnvironment(3000, height);
+    // 2. Environment (Street & Designated Route)
+    this.createEnvironment(worldWidth, height);
 
-    // 2. Create the player
-    this.player = this.physics.add.sprite(200, height / 2, 'player');
-    this.player.setCollideWorldBounds(true);
-    this.player.setCircle(18);
+    // 3. Player entity
+    this.player = new Player(this, 180, height / 2);
+    this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
 
-    // Camera follows player smoothly
-    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+    // 4. Bystanders & Press Journalists
+    this.bystanders = [];
+    this.createBystanders(worldWidth, height);
 
-    // 3. Setup Controls (Keyboard + Touch)
+    // 5. Opponents along the route
+    this.opponents = [];
+    this.createOpponents(height);
+
+    // 6. Rule Manager
+    this.ruleManager = new RuleManager(this, {
+      pathTop: height * 0.25,
+      pathBottom: height * 0.75
+    });
+
+    // 7. Input Controls
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keyWASD = this.input.keyboard.addKeys({
+    this.wasdKeys = this.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D,
       dodge: Phaser.Input.Keyboard.KeyCodes.SPACE,
-      brace: Phaser.Input.Keyboard.KeyCodes.SHIFT
+      brace: Phaser.Input.Keyboard.KeyCodes.SHIFT,
+      forbiddenAttack: Phaser.Input.Keyboard.KeyCodes.F
     });
 
-    // 4. Opponents Group (Sample opponent setup for Phase 1 prototype)
-    this.opponents = this.physics.add.group();
-    this.createSampleOpponents(height);
+    // 8. Event Listeners
+    this.setupCombatEventListeners();
 
-    // 5. Bystanders
-    this.createBystanders(height);
-
-    // 6. Handle Game Over events
-    gameState.on(EVENTS.GAME_OVER, (data) => {
-      this.physics.pause();
-      this.time.delayedCall(1500, () => {
-        this.scene.stop('UIScene');
-        this.scene.start('GameOverScene', data);
-      });
-    });
-
-    // 7. Track path bounds for rule checking
-    this.pathTop = height * 0.25;
-    this.pathBottom = height * 0.75;
-
-    // Setup touch control overlay for mobile devices
-    this.setupTouchControls(width, height);
+    // 9. Touch Controls for Mobile
+    this.setupMobileTouchControls(width, height);
   }
 
   createEnvironment(worldWidth, height) {
-    // Upper sidewalk
+    // Upper sidewalk (Bystanders / Observers)
     this.add.tileSprite(worldWidth / 2, height * 0.125, worldWidth, height * 0.25, 'street');
-    
-    // Designated March Path
-    this.designatedRoad = this.add.tileSprite(worldWidth / 2, height / 2, worldWidth, height * 0.5, 'designated_path');
+
+    // Designated March Path (Center Street)
+    this.add.tileSprite(worldWidth / 2, height / 2, worldWidth, height * 0.5, 'designated_path');
 
     // Lower sidewalk
     this.add.tileSprite(worldWidth / 2, height * 0.875, worldWidth, height * 0.25, 'street');
 
-    // Route boundary guide lines
-    this.add.rectangle(worldWidth / 2, height * 0.25, worldWidth, 4, 0x4ecca3, 0.6);
-    this.add.rectangle(worldWidth / 2, height * 0.75, worldWidth, 4, 0x4ecca3, 0.6);
+    // Boundary guide markers
+    this.add.rectangle(worldWidth / 2, height * 0.25, worldWidth, 4, 0x4ecca3, 0.7);
+    this.add.rectangle(worldWidth / 2, height * 0.75, worldWidth, 4, 0x4ecca3, 0.7);
+
+    // Destination Landmark (Courthouse / Assembly gates at x=3100)
+    const gates = this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.8);
+    this.add.text(3150, height / 2, 'ASSEMBLY GATES', {
+      fontFamily: 'system-ui',
+      fontSize: '20px',
+      fontStyle: 'bold',
+      color: '#16213e'
+    }).setOrigin(0.5).setRotation(-Math.PI / 2);
   }
 
-  createSampleOpponents(height) {
-    const positions = [600, 1000, 1400, 1800, 2200, 2600];
-    positions.forEach((x, index) => {
-      const opp = this.opponents.create(x, height / 2 + (index % 2 === 0 ? -40 : 40), 'opponent');
-      opp.setCircle(18);
-      opp.setImmovable(true);
-      opp.attackTimer = 0;
-      opp.isDefeated = false;
+  createBystanders(worldWidth, height) {
+    for (let x = 250; x < worldWidth - 200; x += 220) {
+      const isPressTop = Math.random() > 0.6;
+      const isPressBottom = Math.random() > 0.6;
+
+      const topBystander = new Bystander(this, x, height * 0.13, isPressTop);
+      const bottomBystander = new Bystander(this, x + 60, height * 0.87, isPressBottom);
+
+      this.bystanders.push(topBystander, bottomBystander);
+    }
+  }
+
+  createOpponents(height) {
+    // Staggered checkpoints along the march route with increasing defection thresholds
+    const checkpointConfigs = [
+      { x: 550, y: height / 2 - 50, threshold: 20 },
+      { x: 900, y: height / 2 + 50, threshold: 35 },
+      { x: 1300, y: height / 2 - 40, threshold: 50 },
+      { x: 1700, y: height / 2 + 40, threshold: 65 },
+      { x: 2100, y: height / 2 - 60, threshold: 75 },
+      { x: 2500, y: height / 2 + 60, threshold: 85 },
+      { x: 2850, y: height / 2, threshold: 95 }
+    ];
+
+    checkpointConfigs.forEach((cfg) => {
+      const opp = new Opponent(this, cfg.x, cfg.y, {
+        supportThreshold: cfg.threshold,
+        patrolRange: 50
+      });
+      this.opponents.push(opp);
     });
 
-    this.physics.add.overlap(this.player, this.opponents, this.handlePlayerOpponentContact, null, this);
+    gameState.opponentsTotal = checkpointConfigs.length;
+    gameState.opponentsActive = checkpointConfigs.length;
   }
 
-  createBystanders(height) {
-    for (let x = 300; x < 2800; x += 350) {
-      // Bystanders gather on sidewalks
-      this.add.image(x, height * 0.15, 'bystander');
-      this.add.image(x + 50, height * 0.85, 'bystander');
+  setupCombatEventListeners() {
+    // Listen for strikes landing from Opponents
+    this.events.on('opponentStrikeLanded', ({ opponent, player }) => {
+      this.handleStrikeInteraction(opponent, player);
+    });
+
+    // Handle game over transitions
+    gameState.on(EVENTS.GAME_OVER, (data) => {
+      this.physics.pause();
+      this.time.delayedCall(1600, () => {
+        this.scene.stop('UIScene');
+        this.scene.start('GameOverScene', data);
+      });
+    });
+  }
+
+  handleStrikeInteraction(opponent, player) {
+    if (gameState.isGameOver) return;
+
+    // Check proximity to press / bystanders for witness multiplier
+    let isWitnessed = false;
+    this.bystanders.forEach((bystander) => {
+      if (bystander.isWitnessing(player.x, player.y)) {
+        isWitnessed = true;
+        bystander.triggerFlash();
+      }
+    });
+
+    const witnessMultiplier = isWitnessed ? 1.5 : 1.0;
+
+    // CASE 1: Timed Dodge (Invulnerable Evasion)
+    if (player.isInvulnerable()) {
+      const hpRecovery = 6;
+      const spGain = Math.round(5 * witnessMultiplier);
+
+      gameState.modifyHealth(hpRecovery);
+      gameState.modifySupport(spGain);
+
+      this.showCombatFeedback(
+        player.x,
+        player.y - 35,
+        `✨ Clean Evasion! (+${hpRecovery} HP${isWitnessed ? ' | 📸 1.5x Witness' : ''})`,
+        '#4ecca3'
+      );
+      return;
     }
-  }
 
-  handlePlayerOpponentContact(player, opponent) {
-    if (opponent.isDefeated) return;
-
-    if (this.isDodging) {
-      // Precision dodge reward!
-      gameState.modifyHealth(5);
-      gameState.modifySupport(4);
-      this.showFloatingText(player.x, player.y - 30, '+5 Composure (Dodge)', '#4ecca3');
-      opponent.isDefeated = true;
-      opponent.setTint(0x888888);
-      gameState.decrementOpponents();
-    } else {
-      // Struck by opponent
-      const isBraced = this.keyWASD.brace.isDown;
-      const damage = isBraced ? -8 : -15;
-      const supportGain = isBraced ? 18 : 10;
+    // CASE 2: Peaceful Stand / Kneeling (Bracing)
+    if (player.isBracing()) {
+      const damage = -7;
+      const baseSupport = 20;
+      const netSupport = Math.round(baseSupport * witnessMultiplier);
 
       gameState.modifyHealth(damage);
-      gameState.modifySupport(supportGain);
+      gameState.modifySupport(netSupport);
 
-      this.cameras.main.shake(150, 0.01);
-      this.showFloatingText(player.x, player.y - 30, `-${Math.abs(damage)} HP / +${supportGain} Support`, '#e94560');
-
-      // Knock back opponent or pacify after sustained witness
-      opponent.isDefeated = true;
-      opponent.setTint(0x555555);
-      gameState.decrementOpponents();
+      this.cameras.main.shake(180, 0.012);
+      this.showCombatFeedback(
+        player.x,
+        player.y - 35,
+        `🛡️ Peaceful Stand! (${damage} HP / +${netSupport} SP${isWitnessed ? ' | 📸 Witness' : ''})`,
+        '#ffd54f'
+      );
+      return;
     }
+
+    // CASE 3: Normal Strike Absorbed
+    const damage = -15;
+    const baseSupport = 10;
+    const netSupport = Math.round(baseSupport * witnessMultiplier);
+
+    gameState.modifyHealth(damage);
+    gameState.modifySupport(netSupport);
+
+    this.cameras.main.shake(220, 0.02);
+    this.showCombatFeedback(
+      player.x,
+      player.y - 35,
+      `💥 Blow Absorbed (${damage} HP / +${netSupport} SP${isWitnessed ? ' | 📸 Witness' : ''})`,
+      '#e94560'
+    );
   }
 
-  showFloatingText(x, y, message, color) {
+  showCombatFeedback(x, y, message, color) {
     const text = this.add.text(x, y, message, {
       fontFamily: 'system-ui, sans-serif',
-      fontSize: '16px',
+      fontSize: '15px',
       fontStyle: 'bold',
-      color: color
+      color: color,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      padding: { x: 8, y: 4 }
     }).setOrigin(0.5);
 
     this.tweens.add({
       targets: text,
-      y: y - 40,
+      y: y - 45,
       alpha: 0,
-      duration: 1000,
+      duration: 1200,
+      ease: 'Power1',
       onComplete: () => text.destroy()
     });
   }
 
-  setupTouchControls(width, height) {
-    // Only configure touch listeners if touch is supported
+  setupMobileTouchControls(width, height) {
+    // Touch controls rendered with scrollFactor(0) so they follow camera
     if (!this.sys.game.device.input.touch) return;
 
-    // Mobile Dodge Button
-    const dodgeBtn = this.add.circle(width - 90, height - 90, 44, 0x4ecca3, 0.7)
+    // 1. Mobile Dodge Button (Right Bottom)
+    const dodgeBtn = this.add.circle(width - 80, height - 80, 42, 0x4ecca3, 0.75)
       .setScrollFactor(0)
       .setInteractive();
-    
-    this.add.text(width - 90, height - 90, 'DODGE', {
+
+    this.add.text(width - 80, height - 80, 'DODGE', {
       fontFamily: 'system-ui',
-      fontSize: '14px',
+      fontSize: '13px',
       fontStyle: 'bold',
       color: '#16213e'
     }).setOrigin(0.5).setScrollFactor(0);
 
-    dodgeBtn.on('pointerdown', () => this.triggerDodge());
+    dodgeBtn.on('pointerdown', () => this.player.triggerDodge());
+
+    // 2. Mobile Kneel/Brace Button (Left of Dodge)
+    const braceBtn = this.add.circle(width - 180, height - 80, 42, 0xffd54f, 0.75)
+      .setScrollFactor(0)
+      .setInteractive();
+
+    this.add.text(width - 180, height - 80, 'KNEEL', {
+      fontFamily: 'system-ui',
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#16213e'
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    braceBtn.on('pointerdown', () => this.player.setBracing(true));
+    braceBtn.on('pointerup', () => this.player.setBracing(false));
+    braceBtn.on('pointerout', () => this.player.setBracing(false));
   }
 
-  triggerDodge() {
-    if (this.isDodging) return;
-    this.isDodging = true;
-    this.player.setAlpha(0.5);
-
-    this.time.delayedCall(300, () => {
-      this.isDodging = false;
-      this.player.setAlpha(1.0);
-    });
-  }
-
-  update() {
+  update(time, delta) {
     if (gameState.isGameOver) return;
 
-    // Movement speeds
-    const speed = 180;
-    this.player.setVelocity(0);
+    // 1. Handle player input
+    this.player.handleInput(this.cursors, this.wasdKeys);
 
-    const isLeft = this.cursors.left.isDown || this.keyWASD.left.isDown;
-    const isRight = this.cursors.right.isDown || this.keyWASD.right.isDown;
-    const isUp = this.cursors.up.isDown || this.keyWASD.up.isDown;
-    const isDown = this.cursors.down.isDown || this.keyWASD.down.isDown;
-
-    if (isLeft) this.player.setVelocityX(-speed);
-    else if (isRight) this.player.setVelocityX(speed);
-
-    if (isUp) this.player.setVelocityY(-speed);
-    else if (isDown) this.player.setVelocityY(speed);
-
-    // Trigger dodge on spacebar
-    if (Phaser.Input.Keyboard.JustDown(this.keyWASD.dodge)) {
-      this.triggerDodge();
+    // 2. Forbidden attack check (Rule validation)
+    if (Phaser.Input.Keyboard.JustDown(this.wasdKeys.forbiddenAttack)) {
+      this.ruleManager.triggerViolenceInfraction('Retaliatory strike attempted');
     }
 
-    // Rule Check: Leaving designated march path
-    const isOffPath = this.player.y < this.pathTop || this.player.y > this.pathBottom;
-    if (isOffPath) {
-      // Off path penalty: gradual support loss
-      gameState.modifySupport(-0.05);
+    // 3. Update all opponents
+    this.opponents.forEach((opp) => opp.update(time, delta, this.player));
+
+    // 4. Update Rule Manager (Path bounds)
+    this.ruleManager.update(this.player);
+
+    // 5. Destination check (Assembly Gates reach)
+    if (this.player.x >= 3120 && !gameState.isGameOver) {
+      gameState.isGameOver = true;
+      gameState.gameResult = 'victory';
+      gameState.emit(EVENTS.GAME_OVER, {
+        result: 'victory',
+        reason: 'The march reached the Assembly Gates peacefully.'
+      });
     }
   }
 }
