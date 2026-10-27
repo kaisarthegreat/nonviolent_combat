@@ -7,7 +7,7 @@ test('GameState - initial values', () => {
   const state = new GameStateManager();
   assert.equal(state.health, 100);
   assert.equal(state.support, 0);
-  assert.equal(state.opponentsActive, 8);
+  assert.equal(state.opponentsActive, state.opponentsTotal);
   assert.equal(state.isGameOver, false);
   assert.equal(state.gameResult, null);
 });

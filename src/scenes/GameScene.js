@@ -4,6 +4,8 @@ import { EVENTS } from '../state/Events.js';
 import { Player } from '../entities/Player.js';
 import { Opponent } from '../entities/Opponent.js';
 import { Bystander } from '../entities/Bystander.js';
+import { Barricade } from '../entities/Barricade.js';
+import { Marcher } from '../entities/Marcher.js';
 import { RuleManager } from '../managers/RuleManager.js';
 import { audioManager } from '../managers/AudioManager.js';
 
@@ -38,13 +40,28 @@ export class GameScene extends Phaser.Scene {
     this.opponents = [];
     this.createOpponents(height);
 
-    // 6. Rule Manager
+    // 6. Checkpoint Barricades
+    this.barricades = [
+      new Barricade(this, 1050, height / 2, height * 0.5, 30, 'District Checkpoint 1'),
+      new Barricade(this, 2050, height / 2, height * 0.5, 65, 'Security Barrier 2')
+    ];
+
+    // 7. Solidarity Marchers (Crowd that follows player as support rises)
+    this.marchers = [];
+    this.marcherMilestones = [
+      { threshold: 25, spawned: false, offset: { x: -45, y: -25 } },
+      { threshold: 45, spawned: false, offset: { x: -50, y: 25 } },
+      { threshold: 65, spawned: false, offset: { x: -85, y: -15 } },
+      { threshold: 85, spawned: false, offset: { x: -90, y: 18 } }
+    ];
+
+    // 8. Rule Manager
     this.ruleManager = new RuleManager(this, {
       pathTop: height * 0.25,
       pathBottom: height * 0.75
     });
 
-    // 7. Input Controls
+    // 9. Input Controls
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasdKeys = this.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
@@ -57,10 +74,10 @@ export class GameScene extends Phaser.Scene {
       forbiddenAttack: Phaser.Input.Keyboard.KeyCodes.F
     });
 
-    // 8. Event Listeners
+    // 10. Event Listeners
     this.setupCombatEventListeners();
 
-    // 9. Touch Controls for Mobile
+    // 11. Touch Controls for Mobile
     this.setupMobileTouchControls(width, height);
   }
 
@@ -72,10 +89,11 @@ export class GameScene extends Phaser.Scene {
     this.add.rectangle(worldWidth / 2, height * 0.25, worldWidth, 4, 0x4ecca3, 0.7);
     this.add.rectangle(worldWidth / 2, height * 0.75, worldWidth, 4, 0x4ecca3, 0.7);
 
-    this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.8);
-    this.add.text(3150, height / 2, 'ASSEMBLY GATES', {
+    // Final Landmark: National Assembly Gates
+    this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.85);
+    this.add.text(3150, height / 2, 'NATIONAL ASSEMBLY GATES', {
       fontFamily: 'system-ui',
-      fontSize: '20px',
+      fontSize: '18px',
       fontStyle: 'bold',
       color: '#16213e'
     }).setOrigin(0.5).setRotation(-Math.PI / 2);
@@ -96,12 +114,12 @@ export class GameScene extends Phaser.Scene {
   createOpponents(height) {
     const checkpointConfigs = [
       { x: 550, y: height / 2 - 50, threshold: 20 },
-      { x: 900, y: height / 2 + 50, threshold: 35 },
-      { x: 1300, y: height / 2 - 40, threshold: 50 },
-      { x: 1700, y: height / 2 + 40, threshold: 65 },
-      { x: 2100, y: height / 2 - 60, threshold: 75 },
-      { x: 2500, y: height / 2 + 60, threshold: 85 },
-      { x: 2850, y: height / 2, threshold: 95 }
+      { x: 880, y: height / 2 + 50, threshold: 28 },
+      { x: 1350, y: height / 2 - 45, threshold: 45 },
+      { x: 1750, y: height / 2 + 45, threshold: 60 },
+      { x: 2300, y: height / 2 - 55, threshold: 75 },
+      { x: 2650, y: height / 2 + 55, threshold: 85 },
+      { x: 2950, y: height / 2, threshold: 95 }
     ];
 
     checkpointConfigs.forEach((cfg) => {
@@ -121,14 +139,18 @@ export class GameScene extends Phaser.Scene {
       this.handleStrikeInteraction(opponent, player);
     });
 
-    // Handle Chant Wave Ripple pacification
     this.events.on('playerChant', ({ x, y, radius }) => {
+      gameState.stats.chantsUsed += 1;
       this.opponents.forEach((opp) => {
         const dist = Phaser.Math.Distance.Between(x, y, opp.x, opp.y);
         if (dist <= radius) {
-          opp.pacify(2200);
+          opp.pacify(2400);
         }
       });
+    });
+
+    gameState.on(EVENTS.SUPPORT_CHANGED, (support) => {
+      this.checkSolidarityMarchers(support);
     });
 
     gameState.on(EVENTS.GAME_OVER, (data) => {
@@ -137,6 +159,25 @@ export class GameScene extends Phaser.Scene {
         this.scene.stop('UIScene');
         this.scene.start('GameOverScene', data);
       });
+    });
+  }
+
+  checkSolidarityMarchers(support) {
+    this.marcherMilestones.forEach((m) => {
+      if (!m.spawned && support >= m.threshold) {
+        m.spawned = true;
+        // Spawn marcher stepping in from sidewalk
+        const spawnY = Math.random() > 0.5 ? 90 : 630;
+        const marcher = new Marcher(this, this.player.x - 70, spawnY, this.player, m.offset);
+        this.marchers.push(marcher);
+
+        this.showCombatFeedback(
+          this.player.x,
+          this.player.y - 45,
+          '🤝 Bystander Joined the March!',
+          '#4ecca3'
+        );
+      }
     });
   }
 
@@ -158,6 +199,7 @@ export class GameScene extends Phaser.Scene {
       const hpRecovery = 6;
       const spGain = Math.round(5 * witnessMultiplier);
 
+      gameState.stats.dodgesClean += 1;
       gameState.modifyHealth(hpRecovery);
       gameState.modifySupport(spGain);
 
@@ -176,6 +218,7 @@ export class GameScene extends Phaser.Scene {
       const baseSupport = 20;
       const netSupport = Math.round(baseSupport * witnessMultiplier);
 
+      gameState.stats.blowsAbsorbed += 1;
       audioManager.playHit();
       gameState.modifyHealth(damage);
       gameState.modifySupport(netSupport);
@@ -195,6 +238,7 @@ export class GameScene extends Phaser.Scene {
     const baseSupport = 10;
     const netSupport = Math.round(baseSupport * witnessMultiplier);
 
+    gameState.stats.blowsAbsorbed += 1;
     audioManager.playHit();
     gameState.modifyHealth(damage);
     gameState.modifySupport(netSupport);
@@ -288,15 +332,21 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.opponents.forEach((opp) => opp.update(time, delta, this.player));
+    this.marchers.forEach((marcher) => marcher.update());
 
     this.ruleManager.update(this.player);
+
+    // Pass progress ratio to UIScene (0.0 to 1.0)
+    const progress = Math.min(1.0, Math.max(0.0, this.player.x / 3120));
+    this.events.emit('playerProgress', progress);
 
     if (this.player.x >= 3120 && !gameState.isGameOver) {
       gameState.isGameOver = true;
       gameState.gameResult = 'victory';
       gameState.emit(EVENTS.GAME_OVER, {
         result: 'victory',
-        reason: 'The march reached the Assembly Gates peacefully.'
+        reason: 'The march reached the Assembly Gates peacefully.',
+        stats: { ...gameState.stats, finalSupport: gameState.support }
       });
     }
   }
