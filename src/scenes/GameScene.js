@@ -21,6 +21,9 @@ export class GameScene extends Phaser.Scene {
     const height = this.cameras.main.height;
     const worldWidth = 3200;
 
+    // Enable multi-touch pointers (left thumb + right thumb)
+    this.input.addPointer(3);
+
     // 1. World & Camera configuration
     this.physics.world.setBounds(0, 0, worldWidth, height);
     this.cameras.main.setBounds(0, 0, worldWidth, height);
@@ -46,7 +49,7 @@ export class GameScene extends Phaser.Scene {
       new Barricade(this, 2050, height / 2, height * 0.5, 65, 'Security Barrier 2')
     ];
 
-    // 7. Solidarity Marchers (Crowd that follows player as support rises)
+    // 7. Solidarity Marchers
     this.marchers = [];
     this.marcherMilestones = [
       { threshold: 25, spawned: false, offset: { x: -45, y: -25 } },
@@ -61,7 +64,7 @@ export class GameScene extends Phaser.Scene {
       pathBottom: height * 0.75
     });
 
-    // 9. Input Controls
+    // 9. Keyboard Controls
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasdKeys = this.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
@@ -74,11 +77,14 @@ export class GameScene extends Phaser.Scene {
       forbiddenAttack: Phaser.Input.Keyboard.KeyCodes.F
     });
 
-    // 10. Event Listeners
+    // 10. Combat Event Listeners
     this.setupCombatEventListeners();
 
-    // 11. Touch Controls for Mobile
+    // 11. Touch State & Controls
+    this.touchMoveVector = { x: 0, y: 0 };
+    this.touchTargetWorld = null;
     this.setupMobileTouchControls(width, height);
+    this.setupTouchAndDragNavigation();
   }
 
   createEnvironment(worldWidth, height) {
@@ -89,7 +95,7 @@ export class GameScene extends Phaser.Scene {
     this.add.rectangle(worldWidth / 2, height * 0.25, worldWidth, 4, 0x4ecca3, 0.7);
     this.add.rectangle(worldWidth / 2, height * 0.75, worldWidth, 4, 0x4ecca3, 0.7);
 
-    // Final Landmark: National Assembly Gates
+    // National Assembly Gates
     this.add.rectangle(3150, height / 2, 40, height * 0.5, 0xffd54f, 0.85);
     this.add.text(3150, height / 2, 'NATIONAL ASSEMBLY GATES', {
       fontFamily: 'system-ui',
@@ -166,7 +172,6 @@ export class GameScene extends Phaser.Scene {
     this.marcherMilestones.forEach((m) => {
       if (!m.spawned && support >= m.threshold) {
         m.spawned = true;
-        // Spawn marcher stepping in from sidewalk
         const spawnY = Math.random() > 0.5 ? 90 : 630;
         const marcher = new Marcher(this, this.player.x - 70, spawnY, this.player, m.offset);
         this.marchers.push(marcher);
@@ -273,48 +278,131 @@ export class GameScene extends Phaser.Scene {
   }
 
   setupMobileTouchControls(width, height) {
-    if (!this.sys.game.device.input.touch) return;
+    // -------------------------------------------------------------
+    // 1. LEFT SIDE: VIRTUAL D-PAD (Directional movement buttons)
+    // -------------------------------------------------------------
+    const dpadX = 110;
+    const dpadY = height - 120;
+    const btnSize = 48;
+    const spacing = 52;
 
-    // 1. Mobile Dodge Button (Right Bottom)
-    const dodgeBtn = this.add.circle(width - 70, height - 70, 38, 0x4ecca3, 0.75)
+    // D-Pad Background Plate
+    this.add.circle(dpadX, dpadY, 78, 0x16213e, 0.55)
       .setScrollFactor(0)
-      .setInteractive();
+      .setStrokeStyle(2, 0x4ecca3, 0.4);
 
-    this.add.text(width - 70, height - 70, 'DODGE', {
+    const createDpadButton = (offsetX, offsetY, label, dirX, dirY) => {
+      const btn = this.add.circle(dpadX + offsetX, dpadY + offsetY, btnSize / 2, 0x22304d, 0.8)
+        .setScrollFactor(0)
+        .setStrokeStyle(1, 0x4ecca3, 0.8)
+        .setInteractive({ useHandCursor: true });
+
+      const text = this.add.text(dpadX + offsetX, dpadY + offsetY, label, {
+        fontFamily: 'system-ui',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#4ecca3'
+      }).setOrigin(0.5).setScrollFactor(0);
+
+      btn.on('pointerdown', () => {
+        btn.setFillStyle(0x4ecca3);
+        text.setColor('#16213e');
+        if (dirX !== 0) this.touchMoveVector.x = dirX;
+        if (dirY !== 0) this.touchMoveVector.y = dirY;
+        this.touchTargetWorld = null; // Clear tap-to-move
+      });
+
+      const release = () => {
+        btn.setFillStyle(0x22304d);
+        text.setColor('#4ecca3');
+        if (dirX !== 0 && this.touchMoveVector.x === dirX) this.touchMoveVector.x = 0;
+        if (dirY !== 0 && this.touchMoveVector.y === dirY) this.touchMoveVector.y = 0;
+      };
+
+      btn.on('pointerup', release);
+      btn.on('pointerout', release);
+    };
+
+    // Forward, Backward, Up, Down buttons
+    createDpadButton(spacing, 0, '▶', 1, 0);     // March Forward (Right)
+    createDpadButton(-spacing, 0, '◀', -1, 0);   // Retreat (Left)
+    createDpadButton(0, -spacing, '▲', 0, -1);   // Up
+    createDpadButton(0, spacing, '▼', 0, 1);     // Down
+
+    // -------------------------------------------------------------
+    // 2. RIGHT SIDE: ACTION BUTTONS (DODGE, KNEEL, CHANT)
+    // -------------------------------------------------------------
+    const rightBaseX = width - 90;
+    const rightBaseY = height - 90;
+
+    // A. DODGE BUTTON (Primary evasion / heal)
+    const dodgeBtn = this.add.circle(rightBaseX, rightBaseY, 44, 0x4ecca3, 0.85)
+      .setScrollFactor(0)
+      .setStrokeStyle(3, 0xffffff, 0.9)
+      .setInteractive({ useHandCursor: true });
+
+    this.add.text(rightBaseX, rightBaseY - 6, 'DODGE', {
+      fontFamily: 'system-ui',
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#16213e'
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    this.add.text(rightBaseX, rightBaseY + 10, '+HP', {
+      fontFamily: 'system-ui',
+      fontSize: '10px',
+      fontStyle: 'bold',
+      color: '#0d5c41'
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    dodgeBtn.on('pointerdown', () => this.player.triggerDodge());
+
+    // B. KNEEL / BRACE BUTTON (Hold ground / defense)
+    const kneelX = rightBaseX - 95;
+    const kneelY = rightBaseY - 25;
+    const braceBtn = this.add.circle(kneelX, kneelY, 38, 0xffd54f, 0.85)
+      .setScrollFactor(0)
+      .setStrokeStyle(2, 0xffffff, 0.8)
+      .setInteractive({ useHandCursor: true });
+
+    this.add.text(kneelX, kneelY - 5, 'KNEEL', {
       fontFamily: 'system-ui',
       fontSize: '11px',
       fontStyle: 'bold',
       color: '#16213e'
     }).setOrigin(0.5).setScrollFactor(0);
 
-    dodgeBtn.on('pointerdown', () => this.player.triggerDodge());
-
-    // 2. Mobile Kneel/Brace Button
-    const braceBtn = this.add.circle(width - 155, height - 70, 38, 0xffd54f, 0.75)
-      .setScrollFactor(0)
-      .setInteractive();
-
-    this.add.text(width - 155, height - 70, 'KNEEL', {
+    this.add.text(kneelX, kneelY + 9, '+SP', {
       fontFamily: 'system-ui',
-      fontSize: '11px',
+      fontSize: '10px',
       fontStyle: 'bold',
-      color: '#16213e'
+      color: '#6d4c00'
     }).setOrigin(0.5).setScrollFactor(0);
 
     braceBtn.on('pointerdown', () => this.player.setBracing(true));
     braceBtn.on('pointerup', () => this.player.setBracing(false));
     braceBtn.on('pointerout', () => this.player.setBracing(false));
 
-    // 3. Mobile Chant Button
-    const chantBtn = this.add.circle(width - 240, height - 70, 38, 0x80cbc4, 0.75)
+    // C. CHANT BUTTON (Pacifying ripple wave)
+    const chantX = rightBaseX - 50;
+    const chantY = rightBaseY - 95;
+    const chantBtn = this.add.circle(chantX, chantY, 36, 0x80cbc4, 0.85)
       .setScrollFactor(0)
-      .setInteractive();
+      .setStrokeStyle(2, 0xffffff, 0.8)
+      .setInteractive({ useHandCursor: true });
 
-    this.add.text(width - 240, height - 70, 'CHANT', {
+    this.add.text(chantX, chantY - 4, 'CHANT', {
       fontFamily: 'system-ui',
-      fontSize: '11px',
+      fontSize: '10px',
       fontStyle: 'bold',
       color: '#16213e'
+    }).setOrigin(0.5).setScrollFactor(0);
+
+    this.add.text(chantX, chantY + 8, 'WAVE', {
+      fontFamily: 'system-ui',
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: '#004d40'
     }).setOrigin(0.5).setScrollFactor(0);
 
     chantBtn.on('pointerdown', () => {
@@ -322,10 +410,44 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  setupTouchAndDragNavigation() {
+    // Allows tap-to-move and touch-and-drag across the street
+    this.input.on('pointerdown', (pointer) => {
+      // Ignore if clicking HUD buttons (top area y < 110 or control corners)
+      if (pointer.y < 110) return;
+      if (pointer.x < 210 && pointer.y > this.cameras.main.height - 210) return; // D-pad zone
+      if (pointer.x > this.cameras.main.width - 230 && pointer.y > this.cameras.main.height - 180) return; // Action buttons zone
+
+      this.touchTargetWorld = {
+        x: pointer.worldX,
+        y: pointer.worldY
+      };
+    });
+
+    this.input.on('pointermove', (pointer) => {
+      if (pointer.isDown && this.touchTargetWorld) {
+        if (pointer.y < 110) return;
+        this.touchTargetWorld.x = pointer.worldX;
+        this.touchTargetWorld.y = pointer.worldY;
+      }
+    });
+
+    this.input.on('pointerup', () => {
+      this.touchTargetWorld = null;
+    });
+  }
+
   update(time, delta) {
     if (gameState.isGameOver) return;
 
-    this.player.handleInput(this.cursors, this.wasdKeys, time);
+    // Handle inputs: keyboard, virtual D-pad vector, and touch-and-drag target
+    this.player.handleInput(
+      this.cursors,
+      this.wasdKeys,
+      time,
+      this.touchMoveVector,
+      this.touchTargetWorld
+    );
 
     if (Phaser.Input.Keyboard.JustDown(this.wasdKeys.forbiddenAttack)) {
       this.ruleManager.triggerViolenceInfraction('Retaliatory strike attempted');
@@ -336,7 +458,6 @@ export class GameScene extends Phaser.Scene {
 
     this.ruleManager.update(this.player);
 
-    // Pass progress ratio to UIScene (0.0 to 1.0)
     const progress = Math.min(1.0, Math.max(0.0, this.player.x / 3120));
     this.events.emit('playerProgress', progress);
 

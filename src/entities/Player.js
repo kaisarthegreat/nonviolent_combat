@@ -124,7 +124,6 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.lastChantTime = currentTime;
     audioManager.playChant();
 
-    // 1. Create expanding harmonic ripple ring
     const ripple = this.scene.add.circle(this.x, this.y, 10, 0x4ecca3, 0.45)
       .setStrokeStyle(3, 0x64ffda, 0.9);
 
@@ -137,7 +136,6 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       onComplete: () => ripple.destroy()
     });
 
-    // 2. Notify GameScene to pacify nearby opponents
     this.scene.events.emit('playerChant', {
       x: this.x,
       y: this.y,
@@ -147,17 +145,19 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return true;
   }
 
-  handleInput(cursors, wasdKeys, time) {
+  handleInput(cursors, wasdKeys, time, touchVector = null, touchTarget = null) {
     if (this.state === PLAYER_STATES.DODGING || gameState.isGameOver) return;
 
     // Chant action [E]
-    if (wasdKeys.chant && Phaser.Input.Keyboard.JustDown(wasdKeys.chant)) {
+    if (wasdKeys && wasdKeys.chant && Phaser.Input.Keyboard.JustDown(wasdKeys.chant)) {
       this.triggerChant(time);
     }
 
     // Brace action [Shift]
-    const wantsBrace = wasdKeys.brace && wasdKeys.brace.isDown;
-    this.setBracing(wantsBrace);
+    const wantsBrace = wasdKeys && wasdKeys.brace && wasdKeys.brace.isDown;
+    if (wantsBrace) {
+      this.setBracing(true);
+    }
 
     if (this.state === PLAYER_STATES.BRACING) {
       this.braceShield.setPosition(this.x, this.y);
@@ -165,19 +165,19 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Dodge action [Space]
-    if (wasdKeys.dodge && Phaser.Input.Keyboard.JustDown(wasdKeys.dodge)) {
+    if (wasdKeys && wasdKeys.dodge && Phaser.Input.Keyboard.JustDown(wasdKeys.dodge)) {
       this.triggerDodge();
       return;
     }
 
-    // Standard Movement
     let vx = 0;
     let vy = 0;
 
-    const isLeft = cursors.left.isDown || wasdKeys.left.isDown;
-    const isRight = cursors.right.isDown || wasdKeys.right.isDown;
-    const isUp = cursors.up.isDown || wasdKeys.up.isDown;
-    const isDown = cursors.down.isDown || wasdKeys.down.isDown;
+    // Keyboard inputs
+    const isLeft = (cursors && cursors.left && cursors.left.isDown) || (wasdKeys && wasdKeys.left && wasdKeys.left.isDown);
+    const isRight = (cursors && cursors.right && cursors.right.isDown) || (wasdKeys && wasdKeys.right && wasdKeys.right.isDown);
+    const isUp = (cursors && cursors.up && cursors.up.isDown) || (wasdKeys && wasdKeys.up && wasdKeys.up.isDown);
+    const isDown = (cursors && cursors.down && cursors.down.isDown) || (wasdKeys && wasdKeys.down && wasdKeys.down.isDown);
 
     if (isLeft) vx = -this.speed;
     else if (isRight) vx = this.speed;
@@ -185,7 +185,22 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (isUp) vy = -this.speed;
     else if (isDown) vy = this.speed;
 
-    if (vx !== 0 && vy !== 0) {
+    // Virtual D-pad / Joystick vector takes priority or combines
+    if (touchVector && (touchVector.x !== 0 || touchVector.y !== 0)) {
+      vx = touchVector.x * this.speed;
+      vy = touchVector.y * this.speed;
+    } else if (touchTarget) {
+      // Touch-and-drag or tap-to-move towards a world point
+      const dist = Phaser.Math.Distance.Between(this.x, this.y, touchTarget.x, touchTarget.y);
+      if (dist > 18) {
+        const angle = Phaser.Math.Angle.Between(this.x, this.y, touchTarget.x, touchTarget.y);
+        vx = Math.cos(angle) * this.speed;
+        vy = Math.sin(angle) * this.speed;
+      }
+    }
+
+    // Diagonal speed normalization
+    if (vx !== 0 && vy !== 0 && (!touchVector || (touchVector.x === 0 && touchVector.y === 0))) {
       vx *= 0.7071;
       vy *= 0.7071;
     }
